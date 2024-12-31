@@ -56,7 +56,7 @@ class AfDianNotify(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/qcgzxw/MoviePilot-Plugins/main/icons/afdian.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     # 插件作者
     plugin_author = "Owen"
     # 作者主页
@@ -106,7 +106,7 @@ class AfDianNotify(_PluginBase):
                 if self._msgtype:
                     mtype = NotificationType.__getitem__(str(self._msgtype)) or NotificationType.Manual
                 text = (
-                    f"爱发电订单通知\n"
+                    f"\n"
                     f"订单号: {order_info.out_trade_no}\n"
                     f"自定义订单ID: {order_info.custom_order_id}\n"
                     f"用户ID: {order_info.user_id}\n"
