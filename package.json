@@ -1,4 +1,17 @@
 {
+    "AfDianNotify": {
+        "name": "爱发电Webhook通知",
+        "description": "接收爱发电webhook通知并推送。",
+        "labels": "消息通知",
+        "version": "1.0",
+        "icon": "https://raw.githubusercontent.com/qcgzxw/MoviePilot-Plugins/main/icons/afdian.png",
+        "author": "qcgzxw",
+        "level": 1,
+        "v2": true,
+        "history": {
+            "v1.0": "接收爱发电webhook通知并推送"
+        }
+    },
     "AutoSignIn": {
         "name": "站点自动签到",
         "description": "自动模拟登录、签到站点。",
