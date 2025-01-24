@@ -11,6 +11,7 @@ from urllib.parse import urlparse, parse_qs, unquote, parse_qsl, urlencode, urlu
 import pytz
 from app.helper.sites import SitesHelper
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from app import schemas
 from app.chain.torrents import TorrentsChain
@@ -72,6 +73,7 @@ class BrushConfig:
         self.brush_sequential = config.get("brush_sequential", False)
         self.proxy_delete = config.get("proxy_delete", False)
         self.active_time_range = config.get("active_time_range")
+        self.cron = config.get("cron")
         self.qb_category = config.get("qb_category")
         self.site_hr_active = config.get("site_hr_active", False)
         self.site_skip_tips = config.get("site_skip_tips", False)
@@ -249,7 +251,7 @@ class BrushFlow(_PluginBase):
     # 插件图标
     plugin_icon = "brush.jpg"
     # 插件版本
-    plugin_version = "4.0.1"
+    plugin_version = "4.3.1"
     # 插件作者
     plugin_author = "jxxghp,InfinityPacer"
     # 作者主页
@@ -431,14 +433,27 @@ class BrushFlow(_PluginBase):
             return services
 
         if self._task_brush_enable:
-            logger.info(f"站点刷流定时服务启动，时间间隔 {self._brush_interval} 分钟")
-            services.append({
-                "id": "BrushFlow",
-                "name": "站点刷流服务",
-                "trigger": "interval",
-                "func": self.brush,
-                "kwargs": {"minutes": self._brush_interval}
-            })
+            if brush_config.cron:
+                values = brush_config.cron.split()
+                values[0] = f"{datetime.now().minute % 10}/10"
+                cron = " ".join(values)
+                logger.info(f"站点刷流定时服务启动，执行周期 {cron}")
+                cron_trigger = CronTrigger.from_crontab(cron)
+                services.append({
+                    "id": "BrushFlow",
+                    "name": "站点刷流服务",
+                    "trigger": cron_trigger,
+                    "func": self.brush
+                })
+            else:
+                logger.info(f"站点刷流定时服务启动，时间间隔 {self._brush_interval} 分钟")
+                services.append({
+                    "id": "BrushFlow",
+                    "name": "站点刷流服务",
+                    "trigger": "interval",
+                    "func": self.brush,
+                    "kwargs": {"minutes": self._brush_interval}
+                })
 
         if brush_config.enabled:
             logger.info(f"站点刷流检查定时服务启动，时间间隔 {self._check_interval} 分钟")
@@ -888,7 +903,7 @@ class BrushFlow(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     "cols": 12,
-                                    "md": 4
+                                    "md": 3
                                 },
                                 'content': [
                                     {
@@ -905,7 +920,24 @@ class BrushFlow(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     "cols": 12,
-                                    "md": 4
+                                    "md": 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VCronField',
+                                        'props': {
+                                            'model': 'cron',
+                                            'label': '执行周期',
+                                            'placeholder': '如：0 0-1 * * FRI,SUN'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    "cols": 12,
+                                    "md": 3
                                 },
                                 'content': [
                                     {
@@ -922,7 +954,7 @@ class BrushFlow(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     "cols": 12,
-                                    "md": 4
+                                    "md": 3
                                 },
                                 'content': [
                                     {
@@ -2110,16 +2142,15 @@ class BrushFlow(_PluginBase):
         ]
 
         if include_network_conditions:
-            downloader_info = self.__get_downloader_info()
-            if downloader_info:
-                current_upload_speed = downloader_info.upload_speed or 0
-                current_download_speed = downloader_info.download_speed or 0
+            # 获取平均带宽
+            avg_upload_speed, avg_download_speed = self.__get_average_bandwidth()
+            if avg_upload_speed is not None and avg_download_speed is not None:
                 reasons.extend([
-                    ("maxupspeed", lambda config: current_upload_speed >= float(config) * 1024,
-                     lambda config: f"当前总上传带宽 {StringUtils.str_filesize(current_upload_speed)}，"
+                    ("maxupspeed", lambda config: avg_upload_speed >= float(config) * 1024,
+                     lambda config: f"当前总上传带宽 {StringUtils.str_filesize(avg_upload_speed)}，"
                                     f"已达到最大值 {config} KB/s，暂时停止新增任务"),
-                    ("maxdlspeed", lambda config: current_download_speed >= float(config) * 1024,
-                     lambda config: f"当前总下载带宽 {StringUtils.str_filesize(current_download_speed)}，"
+                    ("maxdlspeed", lambda config: avg_download_speed >= float(config) * 1024,
+                     lambda config: f"当前总下载带宽 {StringUtils.str_filesize(avg_download_speed)}，"
                                     f"已达到最大值 {config} KB/s，暂时停止新增任务"),
                 ])
 
@@ -2945,6 +2976,7 @@ class BrushFlow(_PluginBase):
             "brush_sequential": brush_config.brush_sequential,
             "proxy_delete": brush_config.proxy_delete,
             "active_time_range": brush_config.active_time_range,
+            "cron": brush_config.cron,
             "qb_category": brush_config.qb_category,
             "enable_site_config": brush_config.enable_site_config,
             "site_config": brush_config.site_config,
@@ -3474,6 +3506,32 @@ class BrushFlow(_PluginBase):
             return 0
         total_size = sum([task.get("size") or 0 for task in task_info.values()])
         return total_size
+
+    def __get_average_bandwidth(self, sample_count: int = 5, interval: float = 3.0) \
+            -> Tuple[Optional[float], Optional[float]]:
+        """
+        多次采样上传和下载带宽，取平均值
+        """
+        upload_speeds = []
+        download_speeds = []
+        start_time = time.time()
+        for _ in range(sample_count):
+            downloader_info = self.__get_downloader_info()
+            if downloader_info:
+                upload_speeds.append(downloader_info.upload_speed or 0)
+                download_speeds.append(downloader_info.download_speed or 0)
+            # 采样间隔
+            time.sleep(interval)
+        end_time = time.time()
+        total_duration = end_time - start_time
+        if not upload_speeds or not download_speeds:
+            return None, None
+        avg_upload_speed = sum(upload_speeds) / len(upload_speeds) if upload_speeds else 0
+        avg_download_speed = sum(download_speeds) / len(download_speeds) if download_speeds else 0
+        logger.debug(f"平均上传带宽 {StringUtils.str_filesize(avg_upload_speed)}, "
+                     f"平均下载带宽 {StringUtils.str_filesize(avg_download_speed)}, "
+                     f"采样次数={sample_count}, 时长={total_duration:.2f} 秒")
+        return avg_upload_speed, avg_download_speed
 
     def __get_downloader_info(self) -> schemas.DownloaderInfo:
         """
